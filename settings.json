@@ -1,0 +1,11 @@
+{
+  "font_scale": 1.3,
+  "layout_mode": "图表优先",
+  "monitor_external": true,
+  "ping_interval": 1.0,
+  "graph_max_points": 60,
+  "always_on_top": false,
+  "opacity": 1.0,
+  "auto_start_monitor": true,
+  "external_target_index": 0
+}

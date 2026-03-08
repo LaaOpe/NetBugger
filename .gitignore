@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+
+# Virtual env
+.venv/
+venv/
+ENV/
+env/
+
+# Byte-compiled / optimized
+*.pyc
+*.pyo
+
+# Distribution / packaging
+build/
+dist/
+*.spec
+*.egg-info/
+.eggs/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# VSCode
+.vscode/
+
+# PyInstaller local
+*.exe
+
+# recordings and logs
+recordings/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+*.suo
+*.user
+*.userosscache
+*.sln
+
+# macOS
+._*
+
+# test outputs
+coverage/
+
