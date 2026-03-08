@@ -1,8 +1,12 @@
 """
-实时网速监控模块（Windows）
-通过 `netstat -e` 获取累计收发字节，按时间差计算实时网速。
+实时网速监控模块
+Windows 通过 `netstat -e`，macOS 通过 `netstat -bI` 获取累计字节，
+按时间差计算实时网速。
 """
 
+from __future__ import annotations
+
+import platform
 import re
 import subprocess
 import threading
@@ -32,6 +36,7 @@ class NetworkSpeedMonitor:
         self._creation_flags = 0
         if hasattr(subprocess, 'CREATE_NO_WINDOW'):
             self._creation_flags = subprocess.CREATE_NO_WINDOW
+        self._platform = platform.system().lower()
 
     def start(self):
         if self._running:
@@ -82,6 +87,9 @@ class NetworkSpeedMonitor:
             return info
 
     def _read_total_bytes(self) -> tuple[int, int]:
+        if self._platform == 'darwin':
+            return self._read_total_bytes_macos()
+
         proc = subprocess.run(
             ['netstat', '-e'],
             capture_output=True,
@@ -110,6 +118,41 @@ class NetworkSpeedMonitor:
                 return a, b
 
         raise RuntimeError('无法从 netstat 输出解析字节统计')
+
+    def _read_total_bytes_macos(self) -> tuple[int, int]:
+        iface = self._detect_default_interface_macos()
+        if not iface:
+            raise RuntimeError('无法检测默认网络接口')
+
+        proc = subprocess.run(
+            ['netstat', '-bI', iface, '-n'],
+            capture_output=True,
+            timeout=8,
+            creationflags=self._creation_flags,
+        )
+        out = _decode_output(proc.stdout)
+        if not out.strip():
+            raise RuntimeError('netstat 输出为空')
+
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) < 10 or parts[0] != iface:
+                continue
+            if parts[6].isdigit() and parts[9].isdigit():
+                return int(parts[6]), int(parts[9])
+
+        raise RuntimeError(f'无法从接口 {iface} 的 netstat 输出解析字节统计')
+
+    def _detect_default_interface_macos(self) -> str | None:
+        proc = subprocess.run(
+            ['route', '-n', 'get', 'default'],
+            capture_output=True,
+            timeout=8,
+            creationflags=self._creation_flags,
+        )
+        out = _decode_output(proc.stdout)
+        m = re.search(r'interface:\s*(\S+)', out, re.I)
+        return m.group(1) if m else None
 
 
 def _extract_numbers(line: str) -> list[int]:

@@ -1,9 +1,13 @@
 """
 WiFi 监控模块
-通过 netsh 采集无线网卡信息（信号强度、SSID、频段等），
+Windows 通过 netsh 采集无线网卡信息；
+macOS 通过 networksetup / ipconfig / system_profiler 采集信息，
 并自动检测默认网关。
 """
 
+from __future__ import annotations
+
+import platform
 import subprocess
 import re
 import threading
@@ -29,11 +33,28 @@ def detect_gateway():
     """
     自动检测默认网关 IP 地址。
 
-    优先使用 ipconfig 解析，兼容中英文 Windows。
+    Windows 优先使用 ipconfig；macOS 使用 route -n get default。
     """
     flags = 0
     if hasattr(subprocess, 'CREATE_NO_WINDOW'):
         flags = subprocess.CREATE_NO_WINDOW
+
+    system = platform.system().lower()
+
+    if system == 'darwin':
+        try:
+            proc = subprocess.run(
+                ['route', '-n', 'get', 'default'],
+                capture_output=True, timeout=10,
+                creationflags=flags,
+            )
+            stdout = _decode_output(proc.stdout)
+            m = re.search(r'gateway:\s*(\d{1,3}(?:\.\d{1,3}){3})', stdout, re.I)
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+        return None
 
     try:
         proc = subprocess.run(
@@ -132,6 +153,7 @@ class WifiMonitor:
         self._creation_flags = 0
         if hasattr(subprocess, 'CREATE_NO_WINDOW'):
             self._creation_flags = subprocess.CREATE_NO_WINDOW
+        self._platform = platform.system().lower()
 
     # ------------------------------------------------------------------
     def start(self):
@@ -162,6 +184,9 @@ class WifiMonitor:
             self._stop_event.wait(self.interval)
 
     def _query(self) -> WifiInfo:
+        if self._platform == 'darwin':
+            return self._query_macos()
+
         info = WifiInfo()
         try:
             proc = subprocess.run(
@@ -215,3 +240,93 @@ class WifiMonitor:
         except Exception as e:
             info.error = f"查询 WiFi 信息失败: {e}"
             return info
+
+    def _query_macos(self) -> WifiInfo:
+        info = WifiInfo()
+        try:
+            device, port_name = self._find_macos_wifi_device()
+            if not device:
+                info.error = "未检测到 Wi‑Fi 网卡"
+                return info
+
+            info.description = f"{port_name} ({device})" if port_name else device
+
+            summary = self._run_command(['ipconfig', 'getsummary', device], timeout=10)
+            profiler = self._run_command(['system_profiler', 'SPAirPortDataType'], timeout=20)
+
+            status = self._match_value(profiler, r'^\s*Status:\s*(.+)$')
+            info.connected = bool(status and status.strip().lower() == 'connected')
+
+            ssid = self._match_value(summary, r'^\s*SSID\s*:\s*(.+)$')
+            bssid = self._match_value(summary, r'^\s*BSSID\s*:\s*(.+)$')
+            auth = self._match_value(summary, r'^\s*Security\s*:\s*(.+)$')
+            radio_type = self._match_value(profiler, r'^\s*PHY Mode:\s*(.+)$')
+            channel = self._match_value(profiler, r'^\s*Channel:\s*(.+)$')
+            tx_rate = self._match_value(profiler, r'^\s*Transmit Rate:\s*(.+)$')
+            signal_noise = re.search(
+                r'^\s*Signal\s*/\s*Noise:\s*(-?\d+)\s*dBm\s*/\s*(-?\d+)\s*dBm$',
+                profiler,
+                re.M,
+            )
+
+            if ssid:
+                info.ssid = ssid.strip()
+            if bssid:
+                info.bssid = bssid.strip()
+            if auth:
+                info.auth = auth.strip()
+            if radio_type:
+                info.radio_type = radio_type.strip()
+            if channel:
+                info.channel = channel.strip()
+            if tx_rate:
+                rate = tx_rate.strip()
+                info.transmit_rate = f"{rate} Mbps" if rate.isdigit() else rate
+                info.receive_rate = info.transmit_rate
+            if signal_noise:
+                rssi = int(signal_noise.group(1))
+                info.signal_percent = self._rssi_to_percent(rssi)
+
+            if not info.connected:
+                info.error = "WiFi 未连接（可能使用有线网络）"
+
+            return info
+        except Exception as e:
+            info.error = f"查询 WiFi 信息失败: {e}"
+            return info
+
+    def _run_command(self, cmd, timeout=10) -> str:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=timeout,
+            creationflags=self._creation_flags,
+        )
+        stdout = _decode_output(proc.stdout)
+        stderr = _decode_output(proc.stderr)
+        return '\n'.join(x for x in (stdout, stderr) if x)
+
+    @staticmethod
+    def _match_value(text: str, pattern: str) -> str:
+        m = re.search(pattern, text, re.M)
+        return m.group(1).strip() if m else ''
+
+    def _find_macos_wifi_device(self):
+        out = self._run_command(['networksetup', '-listallhardwareports'], timeout=10)
+        blocks = re.split(r'\n\s*\n', out)
+        for block in blocks:
+            if not re.search(r'Hardware Port:\s*(Wi-?Fi|AirPort)', block, re.I):
+                continue
+            dev = self._match_value(block, r'^Device:\s*(.+)$')
+            port_name = self._match_value(block, r'^Hardware Port:\s*(.+)$')
+            if dev:
+                return dev, port_name
+        return None, None
+
+    @staticmethod
+    def _rssi_to_percent(rssi: int) -> int:
+        if rssi >= -50:
+            return 100
+        if rssi <= -90:
+            return 0
+        return int(round((rssi + 90) / 40 * 100))

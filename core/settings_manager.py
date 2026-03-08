@@ -8,6 +8,9 @@ import os
 import sys
 
 
+APP_NAME = "NetBugger"
+
+
 @dataclass
 class AppSettings:
     font_scale: float = 1.3
@@ -25,21 +28,49 @@ SETTINGS_FILE = "settings.json"
 
 
 def _default_project_root() -> str:
-    """获取项目根目录，兼容 PyInstaller 打包后的路径。"""
+    """获取项目根目录，兼容源码运行与 PyInstaller 打包后的路径。"""
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def get_app_data_dir(project_root: str | None = None) -> str:
+    """返回可写的应用数据目录。"""
+    if sys.platform == 'darwin':
+        base = os.path.expanduser('~/Library/Application Support')
+    elif sys.platform.startswith('win'):
+        base = os.environ.get('APPDATA') or _default_project_root()
+    else:
+        base = os.path.expanduser('~/.config')
+
+    path = os.path.join(base, APP_NAME)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def get_recordings_dir(project_root: str | None = None) -> str:
+    """返回录制文件目录。"""
+    path = os.path.join(get_app_data_dir(project_root), 'recordings')
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def settings_path(project_root: str | None = None) -> str:
-    if project_root is None:
-        project_root = _default_project_root()
-    return os.path.join(project_root, SETTINGS_FILE)
+    return os.path.join(get_app_data_dir(project_root), SETTINGS_FILE)
 
 
 def load_settings(project_root: str | None = None) -> AppSettings:
-    path = settings_path(project_root)
-    if not os.path.exists(path):
+    app_path = settings_path(project_root)
+    bundled_root = project_root or _default_project_root()
+    bundled_path = os.path.join(bundled_root, SETTINGS_FILE)
+
+    path = None
+    for candidate in (app_path, bundled_path):
+        if os.path.exists(candidate):
+            path = candidate
+            break
+
+    if path is None:
         return AppSettings()
 
     try:
@@ -67,6 +98,7 @@ def save_settings(project_root: str | None = None, settings: AppSettings | None 
         return False
     path = settings_path(project_root)
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(asdict(settings), f, ensure_ascii=False, indent=2)
         return True

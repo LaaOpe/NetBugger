@@ -1,0 +1,76 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build macOS app
+        run: |
+          chmod +x build_macos_app.sh
+          VERSION=${GITHUB_REF_NAME:-v0.1.1} bash build_macos_app.sh
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: dist/NetBugger-macos-${{ github.ref_name }}.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Windows app
+        shell: cmd
+        run: |
+          set VERSION=%GITHUB_REF_NAME%
+          call build_windows_app.bat
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: dist/NetBugger-windows-${{ github.ref_name }}.zip
+
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release
+          path: release-assets
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-assets
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/NetBugger-macos-${{ github.ref_name }}.zip
+            release-assets/NetBugger-windows-${{ github.ref_name }}.zip
+          generate_release_notes: true

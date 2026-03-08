@@ -1,7 +1,12 @@
 # NetBugger — 网络丢包卡顿诊断工具
 
-一款 Windows 桌面软件，用于实时诊断网络丢包卡顿的根因：
+一款桌面网络诊断工具，用于实时诊断网络丢包卡顿的根因：
 **究竟是电脑无线网卡有问题，还是路由器 / 运营商线路有问题。**
+
+## 下载
+
+- Windows v0.1.1: [NetBugger-windows-v0.1.1.zip](https://github.com/LaaOpe/NetBugger/releases/download/v0.1.1/NetBugger-windows-v0.1.1.zip)
+- macOS v0.1.1: [NetBugger-macos-v0.1.1.zip](https://github.com/LaaOpe/NetBugger/releases/download/v0.1.1/NetBugger-macos-v0.1.1.zip)
 
 ---
 
@@ -30,15 +35,40 @@
 
 ## 运行环境
 
-- **操作系统**: Windows 10 / 11
-- **Python**: 3.10+
-- **依赖**: 仅使用 Python 标准库（tkinter 已随 Python 安装）
+- **操作系统**: Windows 10 / 11、macOS
+- **Python**: 3.9+
+- **源码运行依赖**: tkinter（随大多数桌面 Python 发行版提供）
+- **可选依赖**: `Pillow`、`pystray`（用于托盘图标）
+
+> 注：macOS 版本默认关闭系统托盘能力，以避免 Tk 与托盘框架的主线程冲突。
 
 ## 快速开始
 
 ```powershell
 cd NetBugger
 python main.py
+```
+
+## macOS 打包为 App
+
+项目已提供打包脚本：
+
+```bash
+cd NetBugger
+chmod +x build_macos_app.sh
+./build_macos_app.sh
+```
+
+成功后会生成：
+
+```text
+dist/NetBugger.app
+```
+
+macOS 版本的设置与录制文件默认保存在：
+
+```text
+~/Library/Application Support/NetBugger/
 ```
 
 ## 项目结构

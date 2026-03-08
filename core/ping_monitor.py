@@ -3,6 +3,7 @@ Ping 监控模块
 持续 ping 目标地址并收集延迟、丢包、抖动等统计数据
 """
 
+import platform
 import subprocess
 import re
 import threading
@@ -44,6 +45,7 @@ class PingMonitor:
         self._creation_flags = 0
         if hasattr(subprocess, 'CREATE_NO_WINDOW'):
             self._creation_flags = subprocess.CREATE_NO_WINDOW
+        self._platform = platform.system().lower()
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -83,9 +85,9 @@ class PingMonitor:
                 self._stop_event.wait(sleep_time)
 
     def _do_ping(self):
-        """执行一次 ping 并解析结果（兼容中英文 Windows）"""
+        """执行一次 ping 并解析结果（兼容 Windows / macOS）。"""
         try:
-            cmd = ['ping', '-n', '1', '-w', '2000', self.target]
+            cmd = self._build_ping_command()
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -93,15 +95,17 @@ class PingMonitor:
                 timeout=5,
                 creationflags=self._creation_flags,
             )
-            output = proc.stdout
+            output = '\n'.join(x for x in (proc.stdout, proc.stderr) if x)
 
-            # 解析延迟—兼容 "time=3ms" / "时间=3ms" / "time<1ms" / "时间<1ms"
-            m = re.search(r'(?:time|时间)\s*[=<]\s*(\d+)\s*ms', output, re.IGNORECASE)
-            if m:
-                return PingResult(self.target, latency=int(m.group(1)), success=True)
+            latency = self._parse_latency(output)
+            if latency is not None:
+                return PingResult(self.target, latency=latency, success=True)
 
-            # 备用判断：有 TTL 说明收到了回复
-            if re.search(r'TTL\s*=', output, re.IGNORECASE):
+            # 备用判断：有 TTL 或命令返回成功通常表示收到了回复
+            if proc.returncode == 0 and re.search(r'TTL\s*=|ttl=', output, re.IGNORECASE):
+                return PingResult(self.target, latency=1, success=True)
+
+            if proc.returncode == 0:
                 return PingResult(self.target, latency=1, success=True)
 
             return PingResult(self.target, success=False, error="请求超时")
@@ -110,6 +114,18 @@ class PingMonitor:
             return PingResult(self.target, success=False, error="执行超时")
         except Exception as e:
             return PingResult(self.target, success=False, error=str(e))
+
+    def _build_ping_command(self):
+        if self._platform == 'windows':
+            return ['ping', '-n', '1', '-w', '2000', self.target]
+        return ['ping', '-c', '1', self.target]
+
+    @staticmethod
+    def _parse_latency(output: str):
+        m = re.search(r'(?:time|时间)\s*[=<]?\s*(\d+(?:\.\d+)?)\s*ms', output, re.IGNORECASE)
+        if not m:
+            return None
+        return max(1, int(round(float(m.group(1)))))
 
     # ------------------------------------------------------------------
     # 统计数据

@@ -3,6 +3,8 @@
 输出网卡侧 / 路由器侧嫌疑分数与证据。
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 import statistics
 

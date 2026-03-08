@@ -3,21 +3,28 @@ NetBugger 主窗口
 基于 tkinter 的深色主题 UI，实时展示 ping 图表、WiFi 信息与诊断结果。
 """
 
+from __future__ import annotations
+
+import sys
 import tkinter as tk
 from tkinter import ttk
 import time
-import sys
 import os
 import csv
 import threading
 from datetime import datetime
 from collections import deque
 
-try:
-    import pystray
-    from PIL import Image, ImageDraw, ImageFont
-    _HAS_TRAY = True
-except ImportError:
+if sys.platform != 'darwin':
+    try:
+        import pystray
+        from PIL import Image, ImageDraw, ImageFont
+        _HAS_TRAY = True
+    except ImportError:
+        _HAS_TRAY = False
+else:
+    pystray = None
+    Image = ImageDraw = ImageFont = None
     _HAS_TRAY = False
 
 # 确保项目根目录在 sys.path 中
@@ -30,7 +37,7 @@ from core.wifi_monitor import WifiMonitor, WifiInfo, detect_gateway
 from core.diagnosis import DiagnosisEngine, DiagnosisResult
 from core.network_speed_monitor import NetworkSpeedMonitor
 from core.self_diagnosis import SelfDiagnosisEngine
-from core.settings_manager import AppSettings, load_settings, save_settings
+from core.settings_manager import AppSettings, get_recordings_dir, load_settings, save_settings
 
 # ======================================================================
 # 颜色常量（深色主题）
@@ -48,7 +55,13 @@ ORANGE    = '#ce9178'
 RED       = '#f44747'
 BLUE      = '#569cd6'
 
-FONT_FAMILY = 'Microsoft YaHei UI'
+if sys.platform == 'darwin':
+    FONT_FAMILY = 'PingFang SC'
+elif sys.platform.startswith('win'):
+    FONT_FAMILY = 'Microsoft YaHei UI'
+else:
+    FONT_FAMILY = 'Noto Sans CJK SC'
+
 FONT_SCALE = 1.3
 
 
@@ -58,9 +71,118 @@ def sf(size: int) -> int:
 
 def _add_hover(btn, hover_bg):
     """给按钮添加鼠标悬停变色效果。"""
+    if sys.platform == 'darwin':
+        return
     normal_bg = btn.cget('bg')
     btn.bind('<Enter>', lambda e, b=btn, c=hover_bg: b.config(bg=c))
     btn.bind('<Leave>', lambda e, b=btn, c=normal_bg: b.config(bg=c))
+
+
+class MacButton(tk.Label):
+    """macOS 上使用 Label 模拟按钮，避免原生 Button 样式与点击异常。"""
+
+    def __init__(self, master=None, command=None, activebackground=None,
+                 activeforeground=None, state='normal', disabledforeground='#888888',
+                 padx=10, pady=4, relief='flat', bd=0, cursor='hand2', **kwargs):
+        self._command = command
+        self._state = state
+        self._activebackground = activebackground or kwargs.get('bg', '#4a4a4a')
+        self._activeforeground = activeforeground or kwargs.get('fg', '#ffffff')
+        self._normalbackground = kwargs.get('bg', '#4a4a4a')
+        self._normalforeground = kwargs.get('fg', '#ffffff')
+        self._disabledforeground = disabledforeground
+
+        kwargs.setdefault('anchor', 'center')
+        kwargs.setdefault('justify', 'center')
+        kwargs.setdefault('cursor', cursor)
+        kwargs.setdefault('padx', padx)
+        kwargs.setdefault('pady', pady)
+        kwargs.setdefault('relief', relief)
+        kwargs.setdefault('bd', bd)
+        kwargs.setdefault('highlightthickness', 1)
+        kwargs.setdefault('highlightbackground', kwargs.get('bg', '#4a4a4a'))
+        kwargs.setdefault('highlightcolor', kwargs.get('bg', '#4a4a4a'))
+
+        super().__init__(master, **kwargs)
+
+        self.bind('<Enter>', self._on_enter)
+        self.bind('<Leave>', self._on_leave)
+        self.bind('<Button-1>', self._on_click)
+        self.bind('<ButtonRelease-1>', self._on_release)
+        self.bind('<KeyPress-Return>', self._on_keyboard_activate)
+        self.bind('<KeyPress-space>', self._on_keyboard_activate)
+        self.configure(takefocus=1)
+        self._apply_state()
+
+    def configure(self, cnf=None, **kwargs):
+        if cnf:
+            kwargs.update(cnf)
+
+        if 'command' in kwargs:
+            self._command = kwargs.pop('command')
+        if 'activebackground' in kwargs:
+            self._activebackground = kwargs.pop('activebackground')
+        if 'activeforeground' in kwargs:
+            self._activeforeground = kwargs.pop('activeforeground')
+        if 'disabledforeground' in kwargs:
+            self._disabledforeground = kwargs.pop('disabledforeground')
+        if 'state' in kwargs:
+            self._state = kwargs.pop('state')
+        if 'bg' in kwargs:
+            self._normalbackground = kwargs['bg']
+            kwargs.setdefault('highlightbackground', kwargs['bg'])
+            kwargs.setdefault('highlightcolor', kwargs['bg'])
+        if 'fg' in kwargs:
+            self._normalforeground = kwargs['fg']
+
+        result = super().configure(**kwargs)
+        self._apply_state()
+        return result
+
+    config = configure
+
+    def _apply_state(self):
+        if self._state == 'disabled':
+            super().configure(
+                fg=self._disabledforeground,
+                cursor='arrow',
+                bg=self._normalbackground,
+                highlightbackground=self._normalbackground,
+                highlightcolor=self._normalbackground,
+            )
+        else:
+            super().configure(
+                fg=self._normalforeground,
+                cursor='hand2',
+                bg=self._normalbackground,
+                highlightbackground=self._normalbackground,
+                highlightcolor=self._normalbackground,
+            )
+
+    def _on_enter(self, _event):
+        if self._state != 'disabled':
+            super().configure(bg=self._activebackground, fg=self._activeforeground)
+
+    def _on_leave(self, _event):
+        self._apply_state()
+
+    def _on_click(self, _event):
+        if self._state != 'disabled':
+            self.focus_set()
+
+    def _on_release(self, event):
+        if self._state == 'disabled' or not self._command:
+            return
+        widget = self.winfo_containing(event.x_root, event.y_root)
+        if widget is self:
+            self._command()
+
+    def _on_keyboard_activate(self, _event):
+        if self._state != 'disabled' and self._command:
+            self._command()
+
+
+ButtonWidget = MacButton if sys.platform == 'darwin' else tk.Button
 
 
 # ======================================================================
@@ -242,7 +364,7 @@ class RecordViewer(tk.Toplevel):
         self._metric_combo.pack(side='left', padx=(6, 16))
         self._metric_combo.bind('<<ComboboxSelected>>', lambda _e: self._draw())
 
-        tk.Button(
+        ButtonWidget(
             top, text='打开 CSV 文件',
             command=self._open_csv_file,
             font=(FONT_FAMILY, sf(9), 'bold'),
@@ -507,19 +629,19 @@ class SettingsDialog(tk.Toplevel):
         btns = tk.Frame(body, bg=BG_DARK)
         btns.grid(row=row, column=0, columnspan=2, sticky='e', pady=(4, 0))
 
-        cancel_btn = tk.Button(btns, text='取消', command=self._cancel,
-                               font=(FONT_FAMILY, sf(9), 'bold'),
-                               bg='#3c3c3c', fg='#ffffff', activebackground='#505050',
-                               activeforeground='#ffffff', relief='flat',
-                               padx=14, pady=3, cursor='hand2')
+        cancel_btn = ButtonWidget(btns, text='取消', command=self._cancel,
+                      font=(FONT_FAMILY, sf(9), 'bold'),
+                      bg='#3c3c3c', fg='#ffffff', activebackground='#505050',
+                      activeforeground='#ffffff', relief='flat',
+                      padx=14, pady=3, cursor='hand2')
         cancel_btn.pack(side='right')
         _add_hover(cancel_btn, '#505050')
 
-        apply_btn = tk.Button(btns, text='✓ 应用', command=self._apply,
-                              font=(FONT_FAMILY, sf(9), 'bold'),
-                              bg='#0e639c', fg='#ffffff', activebackground='#1177bb',
-                              activeforeground='#ffffff', relief='flat',
-                              padx=16, pady=3, cursor='hand2')
+        apply_btn = ButtonWidget(btns, text='✓ 应用', command=self._apply,
+                     font=(FONT_FAMILY, sf(9), 'bold'),
+                     bg='#0e639c', fg='#ffffff', activebackground='#1177bb',
+                     activeforeground='#ffffff', relief='flat',
+                     padx=16, pady=3, cursor='hand2')
         apply_btn.pack(side='right', padx=(0, 8))
         _add_hover(apply_btn, '#1177bb')
 
@@ -811,6 +933,7 @@ class MainWindow(tk.Tk):
         self._mini_float: MiniFloatWindow | None = None
         self._tray_icon = None
         self._tray_thread = None
+        self._tray_supported = _HAS_TRAY
 
         # ── 构建 UI ─────────────────────
         self._build_ui()
@@ -822,10 +945,12 @@ class MainWindow(tk.Tk):
 
         # 窗口关闭 / 最小化
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.bind('<Unmap>', self._on_minimize)
+        if self._tray_supported:
+            self.bind('<Unmap>', self._on_minimize)
 
         # 初始化系统托盘
-        self._init_tray_icon()
+        if self._tray_supported:
+            self._init_tray_icon()
 
         # 自动开始监测
         if self._settings.auto_start_monitor:
@@ -925,7 +1050,7 @@ class MainWindow(tk.Tk):
 
         tk.Label(ctrl, text="外网目标:", fg=FG_MAIN, bg='#2d2d2d',
                  font=(FONT_FAMILY, sf(9))).pack(side='left')
-        self._ext_var = tk.StringVar(value=self.EXTERNAL_TARGETS[0][0])
+        self._ext_var = tk.StringVar(value=self._ext_target)
         ext_combo = ttk.Combobox(ctrl, textvariable=self._ext_var, width=18,
                                  values=[f"{ip}  ({desc})"
                                          for ip, desc in self.EXTERNAL_TARGETS],
@@ -934,7 +1059,7 @@ class MainWindow(tk.Tk):
         ext_combo.pack(side='left', padx=(4, 16))
         ext_combo.bind('<<ComboboxSelected>>', self._on_ext_changed)
 
-        self._settings_btn = tk.Button(
+        self._settings_btn = ButtonWidget(
             ctrl,
             text='⚙ 设置',
             command=self._open_settings,
@@ -951,20 +1076,21 @@ class MainWindow(tk.Tk):
         self._settings_btn.pack(side='right', padx=(8, 0))
         _add_hover(self._settings_btn, '#5a5a5a')
 
-        # 缩到托盘按钮
-        tray_btn = tk.Button(
-            ctrl, text='⏷ 托盘',
-            command=self._hide_to_tray,
-            font=(FONT_FAMILY, sf(10), 'bold'),
-            bg='#3a3a5c', fg='#ffffff', activebackground='#4a4a6c',
-            activeforeground='#ffffff', relief='flat',
-            padx=10, pady=2, cursor='hand2',
-        )
-        tray_btn.pack(side='right', padx=(8, 0))
-        _add_hover(tray_btn, '#4a4a6c')
+        if self._tray_supported:
+            # 缩到托盘按钮
+            tray_btn = ButtonWidget(
+                ctrl, text='⏷ 托盘',
+                command=self._hide_to_tray,
+                font=(FONT_FAMILY, sf(10), 'bold'),
+                bg='#3a3a5c', fg='#ffffff', activebackground='#4a4a6c',
+                activeforeground='#ffffff', relief='flat',
+                padx=10, pady=2, cursor='hand2',
+            )
+            tray_btn.pack(side='right', padx=(8, 0))
+            _add_hover(tray_btn, '#4a4a6c')
 
         # 悬浮窗按钮
-        float_btn = tk.Button(
+        float_btn = ButtonWidget(
             ctrl, text='📌 悬浮窗',
             command=self._switch_to_float,
             font=(FONT_FAMILY, sf(10), 'bold'),
@@ -976,7 +1102,7 @@ class MainWindow(tk.Tk):
         _add_hover(float_btn, '#3a7060')
 
         self._record_btn_text = tk.StringVar(value="●  录制")
-        self._record_btn = tk.Button(
+        self._record_btn = ButtonWidget(
             ctrl, textvariable=self._record_btn_text,
             command=self._toggle_recording,
             font=(FONT_FAMILY, sf(10), 'bold'),
@@ -986,7 +1112,7 @@ class MainWindow(tk.Tk):
         )
         self._record_btn.pack(side='right', padx=(8, 0))
 
-        self._self_diag_btn = tk.Button(
+        self._self_diag_btn = ButtonWidget(
             ctrl, text='🧠  自我诊断',
             command=self._run_self_diagnosis,
             font=(FONT_FAMILY, sf(10), 'bold'),
@@ -998,14 +1124,14 @@ class MainWindow(tk.Tk):
         _add_hover(self._self_diag_btn, '#556b76')
 
         self._btn_text = tk.StringVar(value="▶  开始监测")
-        self._btn = tk.Button(ctrl, textvariable=self._btn_text,
-                              command=self._toggle_monitor,
-                              font=(FONT_FAMILY, sf(10), 'bold'),
-                              bg='#0e639c', fg='#ffffff',
-                              activebackground='#1177bb',
-                              activeforeground='#ffffff',
-                              relief='flat', padx=16, pady=2,
-                              cursor='hand2')
+        self._btn = ButtonWidget(ctrl, textvariable=self._btn_text,
+                     command=self._toggle_monitor,
+                     font=(FONT_FAMILY, sf(10), 'bold'),
+                     bg='#0e639c', fg='#ffffff',
+                     activebackground='#1177bb',
+                     activeforeground='#ffffff',
+                     relief='flat', padx=16, pady=2,
+                     cursor='hand2')
         self._btn.pack(side='right')
 
         speed_row = tk.Frame(self, bg='#252526', padx=10, pady=4)
@@ -1232,8 +1358,7 @@ class MainWindow(tk.Tk):
         if self._recording:
             return
         try:
-            rec_dir = os.path.join(_PROJECT_ROOT, 'recordings')
-            os.makedirs(rec_dir, exist_ok=True)
+            rec_dir = get_recordings_dir(_PROJECT_ROOT)
             name = datetime.now().strftime('record_%Y%m%d_%H%M%S.csv')
             path = os.path.join(rec_dir, name)
             fp = open(path, 'w', encoding='utf-8-sig', newline='')
@@ -1548,7 +1673,7 @@ class MainWindow(tk.Tk):
     # ==================================================================
     # 系统托盘
     # ==================================================================
-    def _create_tray_image(self) -> 'Image.Image':
+    def _create_tray_image(self):
         """生成托盘图标图像（一个深色圆底 + 闪电符号）。"""
         size = 64
         img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
