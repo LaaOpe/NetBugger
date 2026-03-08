@@ -102,13 +102,3 @@ NetBugger/
 ## 许可
 
 MIT License
-
-## 下载
-
-- **Windows 版（可下载）**: 请在 Releases 中上传构建产物后在此处添加下载链接。例如：
-
-	- 最新安装包 / 可执行文件: https://github.com/your-username/your-repo/releases/latest
-
-- **Mac 版（待构建）**: 尚未构建，待准备 macOS 构建产物后再在此处添加下载链接。
-
-> 提示：将上面的 `https://github.com/your-username/your-repo/releases/latest` 替换为你真实的仓库 URL 或直接把构建产物上传到 GitHub Releases，然后把 Release 资产链接填入这里。
